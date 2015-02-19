@@ -1,0 +1,7 @@
+
+-- execution mask part
+-- e.g. '(16|M16,NM)'
+<EMask> ::= '(' <ExecWidth> '|' <EMaskOff> (',' 'NM')? ')'
+  where <ExecWidth> ::= '1' | '2' | '4' | '8' | '16' | '32'
+        -- the emask
+        <EMaskOff> ::= 'M0' | 'M4' | ... | 'M28'
