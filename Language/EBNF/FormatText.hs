@@ -12,9 +12,11 @@ fmtGrammar g = desc ++ intercalate "\n" (map (fmtVar "") (gVars g))
 
 fmtVar :: String -> Var -> String
 fmtVar ind v = ind ++ desc_str ++ v_str ++ eq_str ++ expr_str ++ where_str
-  where desc_str = if null desc then "" else unlines (map ("-- "++) (lines desc)) ++ "\n"
+  where desc_str
+          | null desc = ""
+          | otherwise = unlines (map ("-- "++) (lines desc))
           where desc = vDesc v
-        v_str = vName v
+        v_str = "<" ++ vName v ++ ">"
         eq_str = " ="
         expr_str =
           case vExpr v of

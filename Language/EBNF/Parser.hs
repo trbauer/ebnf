@@ -62,7 +62,7 @@ pVarDef ind_cl = rule "pVarDef" $ do
              --       first def
              --
              -- This will chew up everyting to first definition
-   withLoc $ \ln -> do
+   withLoc $ \loc -> do
      cl <- getCl
      when (cl /= ind_cl) $
        fail $ "indentation error (parent has indent " ++ show ind_cl ++ ")"
@@ -100,7 +100,7 @@ pVarDef ind_cl = rule "pVarDef" $ do
 
      pSpacesOrComments
 
-     return $! Var desc ln vnm e wes
+     return $! Var desc loc vnm e wes
 
 pVarDefEq :: GP ()
 pVarDefEq = pSymbol "::="
@@ -219,8 +219,8 @@ pSpacesNonEmpty = P.many1 (P.oneOf " \n\t\r") >> return ()
 pSpacesNN :: GP ()
 pSpacesNN = P.many (P.oneOf " \t") >> return ()
 
-getLoc :: GP Int
-getLoc = getLn
+getLoc :: GP Loc
+getLoc = getLnCl
 
 getLn :: GP Int
 getLn = P.sourceLine <$> P.getPosition
@@ -232,7 +232,7 @@ getLnCl :: GP (Int,Int)
 getLnCl = mkPair <$> P.getPosition
   where mkPair = P.sourceLine &&& P.sourceColumn
 
-withLoc :: (Int -> GP a) -> GP a
+withLoc :: (Loc -> GP a) -> GP a
 withLoc f = getLoc >>= f
 
 label :: String -> GP a -> GP a

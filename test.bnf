@@ -1,3 +1,6 @@
+-- grammar header
+
+-- drop this comment
 
 -- execution mask part
 -- e.g. '(16|M16,NM)'
