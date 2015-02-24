@@ -15,7 +15,7 @@ data Var = Var {
   , vWhere :: ![Var]
   } deriving Show
 
-type Loc = (Int,Int)
+type Loc = (Int,Int) -- line and column
 
 data Expr =
     ExprAlts !Loc ![(Expr,String)] -- E1 | E2 | ...
@@ -37,6 +37,7 @@ fmtG g =
  ", gVars = " ++ fmtVs "    " (gVars g) ++ "\n" ++
  "}\n"
 
+fmtVs :: String -> [Var] -> String
 fmtVs = fmtList fmtV
 
 fmtList :: (String -> a -> String) -> String -> [a] -> String

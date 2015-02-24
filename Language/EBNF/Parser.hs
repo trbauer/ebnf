@@ -39,68 +39,100 @@ pGrammar :: GP Grammar
 pGrammar = do
   pSpaces
   desc <- P.option "" (P.try (pCommentBlock <* pSpacesNonEmpty))
-
-  pSpacesOrComments
-
+  pSpacesOrCommentsNoDesc 1
   vs <- P.many (pVarDef 1)
   return $ Grammar desc vs
 
-pSpacesOrComments :: GP ()
-pSpacesOrComments = P.many (pSpacesNonEmpty <|> pInterComment) >> return ()
-  where pInterComment = P.try (pCommentBlock >> P.notFollowedBy pVarRef)
+option :: Show a => String -> a -> GP a -> GP a
+option s a = rule ("P.option." ++ s) . P.option a
 
--- Maybe preceded by a block of comment lines.
--- E.g. "<Foo> ::= <Bar> | <Baz>? 'qux'"
--- E.g. "<Foo> ::= <Bar> | <Baz>? 'qux'"
---            where v = ...
+pSpacesOrCommentsNoDesc :: Int -> GP ()
+pSpacesOrCommentsNoDesc ind = P.many (pSpacesNonEmpty <|> pNonDescComment ind) >> return ()
+
+pNonDescComment :: Int -> GP ()
+pNonDescComment ind = P.try $ do
+  cl <- getCl
+  c <- pCommentBlockInd ind
+  when (cl == ind) $ do
+    P.notFollowedBy $ do
+      pVarRef
+      pSpacesNN
+      pVarDefEq
+  pSpaces
+
+pSpacesOrComments :: GP () -- ignores block descriptors
+pSpacesOrComments = P.many (pSpacesNonEmpty <|> (pCommentLine >> return ())) >> return ()
+
+
+
+-- Parses a variable definition.  Includes an optional preceding
+-- comment block and the preceding annotation comment.
+-- It is indentation-sensitive and the enclosing scope's indent is passed.
+--
+--  -- comment about foo
+--  foo ::= ...
+--    where -- comment about bar
+--          bar ::= ...
+--           -- not a comment about baz (wrong indent)
+--          baz ::= ...
+--         -- not a comment about qux (wrong indent)
+--          qux ::= ...
+--
+--   -- not a comment about foo since one column too far over
+--  foo ::= ...
+--    where
+--
+--
 pVarDef :: Int -> GP Var
-pVarDef ind_cl = rule "pVarDef" $ do
-   desc <- P.option "" pCommentBlock
-   pSpacesNN -- needed for indented comment blocks
+pVarDef parent_ind = rule "pVarDef" $ do
+  desc <- P.option "" (pCommentBlockInd parent_ind)
+  pSpacesNN -- needed for indented comment blocks
              -- e.g. ...
              -- where -- comment here
-             --       first def
+             --       first-def ::= ...
              --
-             -- This will chew up everyting to first definition
-   withLoc $ \loc -> do
-     cl <- getCl
-     when (cl /= ind_cl) $
-       fail $ "indentation error (parent has indent " ++ show ind_cl ++ ")"
-     vnm <- pVarRef
-     pVarDefEq -- ::=
-     e <- pExpr ind_cl
-     let pWhere = rule "pWhere" $ do
-           where_cl <- getCl
-           when (where_cl <= ind_cl) $
+             -- This will chew up everything to first definition
+  withLoc $ \vdef_loc@(vdef_ln,vdef_cl) -> do
+    when (parent_ind /= vdef_cl) $
+      fail $ "indentation error (enclosing scope has indent " ++ show parent_ind ++ ")"
+    vnm <- rule "pVarRef" pVarRef
+    pSpacesOrComments
+    pVarDefEq -- ::=
+    pSpacesOrComments
+    e <- rule "pExpr" $ pExpr parent_ind
+    let pWhere :: GP [Var]
+        pWhere = rule "pWhere" $ do
+          where_kw_cl <- getCl
+          when (parent_ind >= where_kw_cl) $
             fail $ "indentation error where (for " ++ vnm ++ ") must be indented"
-           ln <- getLn
-           pKeyword "where"
-           next_ind <- getCl -- after whitespace following where
-           -- could be next line, or could be right after the word
-           -- indentation for all definitions belonging to this where
-           -- must fit at this column
-           -- could be next line, that's okay
-           --  where
-           --   foo = bar
-           --     where
-           --      bar = baz
-           --      ^ <== OKAY
-           -- BUT:
-           --  where
-           --     foo = bar
-           --       where
-           --   bar = baz
-           --   ^ <=== NOT OKAY
-           --     ^ <=== since <= parent
-           -- however, it can't be less than the parent
-           when (next_ind <= ind_cl) $
-             fail $ "empty where block (starting at line " ++ show ln ++ ")"
-           P.many1 (P.try (pVarDef next_ind)) -- need at least one definition
-     wes <- P.option [] pWhere
-
-     pSpacesOrComments
-
-     return $! Var desc loc vnm e wes
+          where_ln <- getLn
+          pKeyword "where"
+          where_vdef_ind <- getCl -- after whitespace following where
+          -- could be next line, or could be right after the word
+          -- indentation for all definitions belonging to this where
+          -- must fit at this column
+          -- could be next line, that's okay
+          --  where
+          --   foo = bar
+          --     where
+          --      bar = baz
+          --      ^ <== OKAY
+          -- BUT:
+          --  where
+          --     foo = bar
+          --       where
+          --   bar = baz
+          --   ^ <=== NOT OKAY
+          --     ^ <=== since <= parent
+          -- however, it can't be less than the parent
+          when (where_vdef_ind <= parent_ind) $
+            fail $ "empty where block (starting at line " ++ show where_ln ++ ")"
+-- FIXME: need to scope the try deeper this backs off too much?
+--        could do a lookahead to the follow set of pVarDef
+          P.many1 (P.try (pVarDef where_vdef_ind)) -- need at least one definition
+    wes <- P.option [] pWhere
+    rule "pVarDef.pSpacesOrComments" (pSpacesOrCommentsNoDesc parent_ind)
+    return $! Var desc vdef_loc vnm e wes
 
 pVarDefEq :: GP ()
 pVarDefEq = pSymbol "::="
@@ -112,7 +144,7 @@ pVarRef = pToken $
 
 pExpr :: Int -> GP Expr
 -- Top-level grammar expressions
-pExpr = pExprAlts
+pExpr = label "EBNF expression" . pExprAlts
 
 -- E1 | E2 | ...
 pExprAlts :: Int -> GP Expr
@@ -131,7 +163,7 @@ pExprAlts min_cl = rule "pExprAlts" $ withLoc pAlts
 -- E1 E2 ...
 pExprSeq :: Int -> GP Expr
 pExprSeq min_cl = rule "pExprSeq" $ withLoc $ \loc -> do
-  es <- P.many (pExprPostFix min_cl)
+  es <- P.many (P.try (pExprPostFix min_cl))
   case es of
     [e] -> return e
     _ -> return $! ExprSeq loc es
@@ -152,7 +184,7 @@ pExprPostFix min_cl = rule "pExprPostFix" $ withLoc $ \loc -> pExprPrim min_cl >
 pExprPrim :: Int -> GP Expr
 pExprPrim min_cl = rule "pExprPrim" $ withLoc $ \loc -> pPrim loc
   where pPrim loc = do
-            ensureIdent min_cl
+            ensureIdent min_cl (>)
             pExprGrp <|> pExprVar <|> pExprLit <|> pExprDots
           where pExprGrp = do
                   pSymbol "("
@@ -177,10 +209,10 @@ pLiteral = do
   P.spaces
   return cs
 
-ensureIdent :: Int -> GP ()
-ensureIdent min_cl = do
+ensureIdent :: Int -> (Int -> Int -> Bool) -> GP ()
+ensureIdent min_cl op = do
   cl <- getCl
-  when (cl <= min_cl) $
+  when (min_cl `op` cl) $
     fail $ "indentation error (from parent level " ++ show min_cl ++ ")"
 
 -----------------------------------------------------
@@ -202,16 +234,31 @@ pToken p = p <* pSpaces
 pCommentBlock :: GP String
 pCommentBlock = label "comment block" $ intercalate "\n" <$> P.many1 pCommentLine
 
+-- A uniformly indented comment block
+pCommentBlockInd :: Int -> GP String
+pCommentBlockInd ind = label ("comment block ("++ show ind ++ ")") $ intercalate "\n" <$> P.many1 pCommentLineInd
+  where pCommentLineInd = do
+          cl <- getCl
+          when (cl /= ind) $
+            fail $ "wrong indent for block comment (parent has " ++ show ind ++ ")"
+          pCommentLine <* pSpaces
+
 pCommentLine :: GP String
 pCommentLine = body
   where body = do
           pSymbol "--"
           cs <- P.many (P.satisfy (/='\n'))
-          P.try (P.char '\n') -- could be EOF
+          P.try (pChar '\n' <|> pEof) -- could be EOF
           return (dropWhile isSpace cs)
 
 pSpaces :: GP ()
 pSpaces = P.spaces
+
+pChar :: Char -> GP ()
+pChar c = P.char c >> return ()
+
+pEof :: GP ()
+pEof = P.eof
 
 pSpacesNonEmpty :: GP ()
 pSpacesNonEmpty = P.many1 (P.oneOf " \n\t\r") >> return ()
@@ -249,17 +296,16 @@ ruleVerb s r = do
   lncl <- getLnCl
   traceP $ "==> " ++ s
   a <- r
-  traceP $ "<== " ++ show a ++ " (from " ++ show lncl ++ ")"
+  traceP $ "<== " ++ s ++ ": " ++ show a ++ " (from " ++ show lncl ++ ")"
   return a
 
 tracePAt :: (Int,Int) -> String -> GP ()
-tracePAt at m =
-  trace ("@" ++ show at ++ ": " ++ m) (return ())
+tracePAt at m = do
+  inp <- P.getInput
+  trace ("TRACE@" ++ show at ++ " with LA[" ++ (take 8 inp) ++ "...]: " ++ m) (return ())
 
 traceP :: String -> GP ()
 traceP m = getLnCl >>= flip tracePAt m
-
-
 
 testP :: Show a => GP a -> String -> IO ()
 testP p inp =

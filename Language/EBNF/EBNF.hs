@@ -14,10 +14,11 @@ import Language.EBNF.Types
 
 import qualified Data.Set as D
 
-
+-- Computes the unbound variables (non-terminals) in the grammar
 gVarsRefed :: Grammar -> [String]
 gVarsRefed = nubOrd . concatMap vVarsRefed . gVars
 
+-- Returns all literals in the grammar
 gTermsRefed :: Grammar -> [String]
 gTermsRefed = nubOrd . concatMap vTermsRefed . gVars
 

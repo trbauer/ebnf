@@ -12,9 +12,12 @@ fmtGrammarHTML g =
     "<html xmlns=\"http://www.w3.org/1999/xhtml\">\n" ++
     "  <head>\n" ++
     "    <title>Grammar</title>\n" ++
+    "    <style type=\"text/css\">\n" ++
+    "      b {font-family:sans-serif}\n" ++
+    "    </style>\n" ++
     "  </head>\n" ++
     "  <body>\n" ++
-    fmtGrm "  " g ++ "\n" ++
+    fmtGrm "  " g ++
     "  </body>\n" ++
     "</html>"
   where fmtGrm :: String -> Grammar -> String
@@ -60,7 +63,7 @@ fmtGrammarHTML g =
 
                 v_desc_tr
                   | null dstr = ""
-                  | otherwise = ind ++ "<tr><td style=\"padding-left:" ++
+                  | otherwise = ind ++ "<tr><td style=\"font-family:sans-serif;padding-left:" ++
                                             show (48*(ilvl - 1)) ++ "px\" colspan=\"4\">" ++
                                             desc dstr ++ "</td></tr>\n"
                   where dstr = vDesc v
@@ -72,7 +75,7 @@ fmtGrammarHTML g =
                            ind ++ "<tr><td></td>" ++ alt_bar_td ++ "\n" ++ fmtAltTDs a ++ "</tr>"
 
                 fmtAltTDs :: (Expr,String) -> String
-                fmtAltTDs (e,d) = ind ++ "<td>" ++ fmtHtmlExpr e ++ "</td><td>" ++ desc d ++ "</td>"
+                fmtAltTDs (e,d) = ind ++ "<td>" ++ fmtHtmlExpr e ++ "</td><td style=\"font-family:sans-serif\">" ++ desc d ++ "</td>"
 
                 where_clause
                   | null v_wheres = ""
@@ -129,15 +132,13 @@ fmtGrammarHTML g =
         -- escapes HTML with some handling of embedded preformatting statatements
         -- E.g. @foo@ preformats foo
         escDesc :: String -> String
-        escDesc (c:cs)
-          | c `elem` "\'@" =
-            case span (/=c) cs of
-              (seg,"") -> c : escDesc seg -- unclosed @ or ' -> ignore it
-              (seg,_:cs) -> "<pre>" ++ seg ++ "</pre>" ++ escDesc cs
-        escDesc ('<':cs) = "&lt;" ++ esc cs
-        escDesc ('>':cs) = "&gt;" ++ esc cs
-        escDesc ('&':cs) = "&amp;" ++ esc cs
-        escDesc ('"':cs) = "&quot;" ++ esc cs
-        escDesc ('\'':cs) = "&apos;" ++ esc cs
-        escDesc (c:cs) = c:esc cs
+        escDesc (d:cs)
+          | d `elem` "\'@" = "<span style=\"font-family:monospace\">" ++ addLitSpan cs
+          where addLitSpan [] = " [ERROR: unclosed literal escape with \\" ++ esc [d] ++ "]" -- unclosed @ or '
+                addLitSpan ('\\':c:cs)
+                  | c == d    = esc [c] ++ addLitSpan cs -- escaped
+                addLitSpan (c:cs)
+                  | c == d    = "</span>" ++ escDesc cs
+                  | otherwise = esc [c] ++ addLitSpan cs
+        escDesc (c:cs) = esc [c] ++ escDesc cs
         escDesc [] = []
