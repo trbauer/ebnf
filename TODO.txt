@@ -2,3 +2,241 @@ FIX:
 -- The rough layout of a gen instruction
 --
 <Instruction> ::= ...
+
+
+// a source location
+struct Loc {
+  unsigned short m_line;
+  unsigned short m_col;
+  Loc()
+    : m_line(0), m_col(0)
+  {
+  }
+  Loc(unsigned short ln, unsigned short cl)
+    : m_line(ln), m_col(cl)
+  {
+  }
+};
+
+enum Lexeme {
+  ERROR = 0,
+
+  // delimiters
+  LANGLE, // <
+  RANGLE, // >
+}
+
+struct Symbol {
+  struct Loc    m_loc;
+  std::string   m_text;
+
+  Symbol(const char *txt, unsigned short ln, unsigned cl)
+    : m_loc(ln,cl)
+    , m_text(txt)
+  {
+
+  }
+}
+
+
+//////////////////////////////////////////////////////////////// lexical spec is
+
+%{
+#include "Lexemes.hpp"
+
+// #include "Lexer.hpp"
+class Lexer;
+#define YY_DECL iga::Lexeme yylex (Lexer &l, yyscan_t yyscanner)
+
+/* seems many versions of flex don't support column info in re-entrant scanners;
+ * this works
+ */
+#define YY_USER_ACTION \
+    yyset_column(yyget_column(yyscanner) + yyget_leng(yyscanner), yyscanner);
+
+%}
+
+%option outfile="lex.yy.cpp" header-file="lex.yy.hpp"
+%option nounistd
+%option reentrant
+%option noyywrap
+%option yylineno
+/* omits isatty */
+%option never-interactive
+
+/*
+TODO:
+%option extra-type="struct stat *"
+If extra context needed:
+   void yyset_extra(YY_EXTRA_TYPE arbitrary_data, yyscan_t scanner);
+*/
+
+
+%%
+
+\<                    return iga::Lexeme::LANGLE;
+\>                    return iga::Lexeme::RANGLE;
+\[                    return iga::Lexeme::LBRACK;
+\]                    return iga::Lexeme::RBRACK;
+\{                    return iga::Lexeme::LBRACE;
+\}                    return iga::Lexeme::RBRACE;
+\(                    return iga::Lexeme::LPAREN;
+\)                    return iga::Lexeme::RPAREN;
+\|                    return iga::Lexeme::PIPE;
+\.                    return iga::Lexeme::DOT;
+\,                    return iga::Lexeme::COMMA;
+\;                    return iga::Lexeme::SEMI;
+\:                    return iga::Lexeme::COLON;
+
+\~                    return iga::Lexeme::TILDE;
+\(abs\)               return iga::Lexeme::ABS;
+\(sat\)               return iga::Lexeme::SAT;
+
+\!                    return iga::Lexeme::BANG;
+\@                    return iga::Lexeme::AT;
+\#                    return iga::Lexeme::HASH;
+\=                    return iga::Lexeme::EQ;
+
+\%                    return iga::Lexeme::MOD;
+\*                    return iga::Lexeme::MUL;
+\/                    return iga::Lexeme::DIV;
+\+                    return iga::Lexeme::ADD;
+\-                    return iga::Lexeme::SUB;
+\<<                   return iga::Lexeme::LSH;
+\>>                   return iga::Lexeme::RSH;
+
+[a-zA-Z][_a-zA-Z0-9]*  return iga::Lexeme::IDENT;
+\@[_a-zA-Z][_a-zA-Z0-9]*  return iga::Lexeme::LABEL;
+[0-9]+                return iga::Lexeme::INTLIT;
+([0.9]*.[0-9]+)|([0.9]*.[0-9]+) return iga::Lexeme::FLTLIT;
+\.[a-zA-Z][a-zA-Z0-9]+ return iga::Lexeme::DIRECTIVE;
+
+
+[ \t\r\n]+   /* whitespace */;
+"//"[^\n]*   /* EOL comment */
+
+.                    return iga::Lexeme::ERROR;
+<<EOF>>              return iga::Lexeme::END_OF_FILE;
+
+%%
+
+
+//////////////////////////////////////////////////////////////// lexical spec is
+
+#pragma once
+
+namespace iga {
+
+// a source location
+struct Loc {
+  unsigned short m_line;
+  unsigned short m_col;
+  unsigned short m_offset;
+  unsigned short m_length;
+  Loc(unsigned short ln, unsigned short cl, unsigned short off, unsigned short len)
+    : m_line(ln), m_col(cl), m_offset(ln), m_length(cl)
+  {
+  }
+};
+
+enum class Lexeme {
+  ERROR = 0,
+
+  ...
+  ...
+  ...
+
+  END_OF_FILE
+}
+
+static const char *LexemeString(const Lexeme &l)
+{
+#define TOKEN(T) case iga::Lexeme::T: return #T
+  switch (l) {
+  TOKEN(ERROR);
+
+  TOKEN(RANGLE);
+
+  TOKEN(END_OF_FILE);
+
+  default: return "?";
+//  default: {
+//    static char buf[16];
+//    sprintf(buf,"%d?",(int)l);
+//    return buf;
+//    }
+}
+
+
+
+class Token {
+  struct Location loc;
+  union {
+    double floating_value;
+    int64_t integral_value;
+  }
+  const char *file_buffer;
+  Lexeme lexeme;
+public:
+  std::string Text() const {
+    // use loc and return underlying text
+  }
+};
+
+
+
+
+//////////////////////////////////////////////////////////////
+// TODO: rip out class, make buffered only.  Use scanner and destroy at end
+// scan loop will compute columns and offsets via yy_length()
+#pragma once
+
+#include "Lexemes.hpp"
+
+#define YY_DECL iga::Lexeme yylex (Lexer &l, yyscan_t yyscanner)
+#ifndef YY_NO_UNISTD_H
+#define YY_NO_UNISTD_H
+#endif
+#include "lex.yy.hpp"
+
+class Lexer;
+YY_DECL;
+
+class Lexer {
+  yyscan_t m_scanner;
+public:
+  Lexer(FILE *f) : m_scanner(nullptr) {
+    yylex_init(&m_scanner);
+    yyset_in(f, m_scanner);
+  }
+
+  ~Lexer() {
+    yylex_destroy(m_scanner);
+  }
+
+  iga::Lexeme NextLexeme() {
+    return yylex(*this,m_scanner);
+  }
+
+  const char *token() const {
+    // yyget_text
+    // yyget_leng
+    return yyget_text(m_scanner);
+  }
+
+  unsigned short Length() const {
+    return (unsigned short)yyget_leng(m_scanner);
+  }
+
+  unsigned short Line() const {
+    return (unsigned short)yyget_lineno(m_scanner);
+  }
+
+  unsigned short Column() const {
+    return (unsigned short)yyget_column(m_scanner);
+  }
+};
+
+
+
+

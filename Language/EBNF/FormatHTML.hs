@@ -24,10 +24,10 @@ fmtGrammarHTML g =
         fmtGrm ind g = concatMap fmtRootVar (gVars g)
 
         --- | desc...                                |
-        --- | VAR        | ::=   | value    | desc   |
+        --- | VAR        | =   | value    | desc   |
         --  |            |   |   | value    | desc   |
         --  | ... where  |                           |
-        --  |       WHV  | ::=   | value    | desc   |
+        --  |       WHV  | =   | value    | desc   |
         --  |            |   |   | value    | desc   |
         --  | ...
         fmtRootVar :: Var -> String
@@ -93,8 +93,10 @@ fmtGrammarHTML g =
         fmtHtmlExpr (ExprOpt  _ e)  = fmtHtmlExpr e ++ meta "?"
         fmtHtmlExpr (ExprMany _ e)  = fmtHtmlExpr e ++ meta "*"
         fmtHtmlExpr (ExprPos  _ e)  = fmtHtmlExpr e ++ meta "+"
+        fmtHtmlExpr (ExprAs  _ t e) = meta "[<" ++ esc t ++ meta ">]" ++ fmtHtmlExpr e
         fmtHtmlExpr (ExprGrp  _ e)  = meta "(" ++ fmtHtmlExpr e ++ meta ")"
         fmtHtmlExpr (ExprVar  _ v)  = fmtVarRef v
+        fmtHtmlExpr (ExprPatt _ p)  = term (esc p)
         fmtHtmlExpr (ExprLit  _ l)  = term (esc l)
         fmtHtmlExpr (ExprDots _)    = "..."
 

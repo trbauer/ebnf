@@ -1,0 +1,31 @@
+-- This test grammar tests (all of?) the expressions in our grammar.
+-- This is the top comment, and it applies to the entire grammar.
+-- Subsequent comments will be dropped silently.
+
+-- This will be dropped
+-- And so will this
+
+-- This is the description comment, and it applies to the variable defined next.
+RootVar = RootVar -- comment for this alternative
+        | RootVar RootVar
+        | RootVar* RootVar+ RootVar? WhereVar -- comment for last alternative
+  where WhereVar = Shadowed
+        -- this comment applies to this scoped variable
+        Shadowed = 'correct'
+        -- conversion
+        Convert = [IntLit]'0'
+
+        -- this is a range, we will expand 'x9' and 'x10' into the alternation
+        SmartRange = 'not-a-range' | 'x8' | ... | 'x11'
+                   | 'won\'t expand' 'y0' | ... | 'y3'
+                   | [IntLit]('0' | ... | '3' | Others) -- forces these tokens to be scanned as IntLit
+                   where
+                     Others = '5' | '6' -- As expression above lifts these
+        NoComment = ...
+
+IntLit = @[0-9]*@ -- converts to a lexical pattern (terminal)
+Ident = @[_a-zA-Z][_a-zA-Z0-9]*@
+Pattern = @patt\@ern@
+
+-- This variable should be shadowed by a where in the first example.
+Shadowed = 'should not be seen by RootVar'

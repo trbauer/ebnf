@@ -1,5 +1,6 @@
 
 import Language.EBNF.EBNF
+import Language.EBNF.Parser
 import qualified Language.EBNF.FormatText as T
 import qualified Language.EBNF.FormatHTML as H
 
@@ -11,8 +12,9 @@ testG :: FilePath -> IO ()
 testG fp = do
   inp <- readFile fp
   length inp `seq` return ()
+  print $ length (lines inp)
   case parseGrammar inp of
-    Left err -> putStrLn err
+    Left errs -> putStrLn (fmtDiagsWith inp errs)
     Right g -> do
       putStrLn $ fmtG g
       putStrLn $ "gVarsRefed: " ++ show (gVarsRefed g)
@@ -22,15 +24,15 @@ testG fp = do
       putStrLn "****************"
 
       putStrLn "CHECKING GRAMMAR:"
-      checkGrammar g
+      checkGrammarIO g
       putStrLn "****************"
       -- putStrLn $ fmtGrammarHTML g
       writeFile "out.html" $ H.fmtGrammarHTML g
 
-gio = parseGrammar' <$> readFile "test.bnf"
+gio = parseGrammar' <$> readFile "TestGrammar.bnf"
 
-checkGrammar :: Grammar -> IO ()
-checkGrammar g = mapM_ checkVar (gVars g)
+checkGrammarIO :: Grammar -> IO ()
+checkGrammarIO g = mapM_ checkVar (gVars g)
   where v_roots = map vName (gVars g)
 
         checkVar v = do

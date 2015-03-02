@@ -1,6 +1,7 @@
 module Language.EBNF.Parser where
 
 import Language.EBNF.Types
+import Language.EBNF.FormatText
 
 import Control.Applicative
 import Control.Arrow
@@ -16,23 +17,89 @@ import qualified Text.Parsec.Error      as P
 import qualified Text.Parsec.Pos        as P
 import qualified Text.Parsec.Prim       as P
 
-parseGrammar :: String -> Either String Grammar
+parseGrammar :: String -> Either [Diag] Grammar
 parseGrammar inp =
   case P.runParser (pGrammar <* P.eof) () "" inp of
-    Left perr -> Left $ show (ln,col) ++ ". " ++ msg ++ "\n" ++ lnstr ++ "\n" ++ replicate col ' ' ++ "^"
-      where col = P.sourceColumn (P.errorPos perr) - 1
+    Left perr -> Left $ [((ln,cl),msg)]
+      where cl = P.sourceColumn (P.errorPos perr)
             ln = P.sourceLine (P.errorPos perr)
-            lnstr = lines inp !! (ln - 1)
             msg = intercalate "; "  (tail (lines (show perr)))
-            -- msg = intercalate "; " (map show es)
-            --   where es = P.errorMessages perr
     Right g -> Right g
 
 parseGrammar' :: String -> Grammar
 parseGrammar' inp =
   case parseGrammar inp of
-    Left err -> error $ "parseGrammar': " ++ err
+    Left ds -> error $ "parseGrammar': " ++ fmtDiagsWith inp ds
     Right g -> g
+
+parseGrammarWithChecks :: String -> Either [Diag] Grammar
+parseGrammarWithChecks inp =
+  case parseGrammar inp of
+    Left perr -> Left perr
+    Right g ->
+      case checkGrammar g of
+        [] -> Right g
+        errs -> Left errs
+
+expandEllipses :: Grammar -> Grammar
+expandEllipses g = g
+
+checkGrammar :: Grammar -> [Diag]
+checkGrammar g = concatMap ($g) [checkBindings, ensureExprAsAllFinite]
+
+-- TODO: lift ranges
+type Env = [[(Var,[Var])]] -- var and if it's finite or not
+
+
+checkBindings :: Grammar -> [Diag]
+checkBindings g = checkVarDefsContext [] (gVars g)
+  where envExtend :: [Var] -> Env -> Env
+        envExtend vs env = map (\v -> (v,vs)) vs : env
+
+        envLookup :: String -> Env -> Maybe (Var,[Var])
+        envLookup vnm = find ((==vnm) . vName . fst) . concat
+
+        checkVarDefsContext :: Env -> [Var] -> [Diag]
+        checkVarDefsContext env vs =
+          concatMap (checkVarDef (envExtend vs env)) vs
+
+        checkVarDef :: Env -> Var -> [Diag]
+        checkVarDef env v =
+              checkExpr (vExpr v) ++ checkVarDefsContext env (vWhere v)
+          where checkExpr :: Expr -> [Diag]
+                checkExpr (ExprVar loc vref) =
+                  case vref `envLookup` env of
+                    Nothing -> [(loc,"unbound variable reference")]
+                    Just _ -> []
+                checkExpr (ExprAs loc vref e) =
+                  case vref `envLookup` env of
+                    Nothing -> [(loc,"unbound variable reference")]
+                    Just (_,vs)
+                      -- goes one level deep
+                      | isFinite [] (envExtend vs []) e -> []
+                      | otherwise -> [(loc,"subexpression is not finite")]
+                checkExpr e = concatMap checkExpr (eSubExprs e)
+
+        -- must flatten to all terminals
+        isFinite :: [String] -> Env -> Expr -> Bool
+        -- only goes one level
+        isFinite stk env (ExprVar _ vref) = False
+--        isFinite stk env _ = True
+--        isFinite stk env (ExprLit _ _) = True
+--        isFinite stk env (ExprPatt _ _) = True
+--        isFinite stk env (ExprVar _ vref) = False
+--          | vref`elem`stk =
+--          | otherwise =
+--            case vref `envLookup` env of
+--              Nothing -> True -- unbound ident (will get caught above)
+--              Just (v,env_v) -> isFinite (vref:stk) env_v (vExpr v)
+        isFinite stk env e = all (isFinite stk env) (eSubExprs e)
+
+
+-- TODO: semantic check that all subgrammar of all ExprAs's is finite.
+ensureExprAsAllFinite :: Grammar -> [(Loc,String)]
+ensureExprAsAllFinite g = []
+
 
 -- parses a grammar
 pGrammar :: GP Grammar
@@ -70,16 +137,16 @@ pSpacesOrComments = P.many (pSpacesNonEmpty <|> (pCommentLine >> return ())) >> 
 -- It is indentation-sensitive and the enclosing scope's indent is passed.
 --
 --  -- comment about foo
---  foo ::= ...
+--  foo = ...
 --    where -- comment about bar
---          bar ::= ...
+--          bar = ...
 --           -- not a comment about baz (wrong indent)
---          baz ::= ...
+--          baz = ...
 --         -- not a comment about qux (wrong indent)
---          qux ::= ...
+--          qux = ...
 --
 --   -- not a comment about foo since one column too far over
---  foo ::= ...
+--  foo = ...
 --    where
 --
 --
@@ -89,7 +156,7 @@ pVarDef parent_ind = rule "pVarDef" $ do
   pSpacesNN -- needed for indented comment blocks
              -- e.g. ...
              -- where -- comment here
-             --       first-def ::= ...
+             --       first-def = ...
              --
              -- This will chew up everything to first definition
   withLoc $ \vdef_loc@(vdef_ln,vdef_cl) -> do
@@ -97,7 +164,7 @@ pVarDef parent_ind = rule "pVarDef" $ do
       fail $ "indentation error (enclosing scope has indent " ++ show parent_ind ++ ")"
     vnm <- rule "pVarRef" pVarRef
     pSpacesOrComments
-    pVarDefEq -- ::=
+    pVarDefEq -- =
     pSpacesOrComments
     e <- rule "pExpr" $ pExpr parent_ind
     let pWhere :: GP [Var]
@@ -135,12 +202,16 @@ pVarDef parent_ind = rule "pVarDef" $ do
     return $! Var desc vdef_loc vnm e wes
 
 pVarDefEq :: GP ()
-pVarDefEq = pSymbol "::="
+pVarDefEq = pSymbol "="
 
--- "<Foo>"
+-- Variable reference
+--   Foo
 pVarRef :: GP String
-pVarRef = pToken $
-  P.between (P.char '<') (P.char '>') (P.many1 P.alphaNum)
+pVarRef = pToken $ do
+  P.notFollowedBy (pKeyword "where")
+  a <- P.letter
+  as <- P.many P.alphaNum
+  return (a:as)
 
 pExpr :: Int -> GP Expr
 -- Top-level grammar expressions
@@ -160,6 +231,7 @@ pExprAlts min_cl = rule "pExprAlts" $ withLoc pAlts
               else return ""
           return (es,comm)
 
+-- Sequential expression
 -- E1 E2 ...
 pExprSeq :: Int -> GP Expr
 pExprSeq min_cl = rule "pExprSeq" $ withLoc $ \loc -> do
@@ -168,37 +240,65 @@ pExprSeq min_cl = rule "pExprSeq" $ withLoc $ \loc -> do
     [e] -> return e
     _ -> return $! ExprSeq loc es
 
--- E* or E? ...
+-- Postfix expression
+--   ExprOpt  -- E?
+--   ExprMany -- E*
+--   ExprPos  -- E+
 pExprPostFix :: Int -> GP Expr
-pExprPostFix min_cl = rule "pExprPostFix" $ withLoc $ \loc -> pExprPrim min_cl >>= pPostFixesOp loc
+pExprPostFix min_cl = rule "pExprPostFix" $ withLoc $ \loc -> pExprAs min_cl >>= pPostFixesOp loc
   where pPostFixesOp loc e =
-                pOp ExprOpt "?"
+                pOp ExprOpt  "?"
             <|> pOp ExprMany "*"
-            <|> pOp ExprPos "+"
+            <|> pOp ExprPos  "+"
             <|> return e
           where pOp cons op = pSymbol op >> (return $! cons loc e)
 
---   | ExprGrp  !Expr   -- (E)
---  | ExprLit  !String -- 'lit'
---  | ExprDots         -- ...
+-- Conversion expression
+--  ExprAs   !Expr   -- [<VarName>]E
+pExprAs :: Int -> GP Expr
+pExprAs min_cl = rule "pExprAs" $ P.try pExprAs <|> pExprPrim min_cl
+  where pExprAs = withLoc $ \loc -> do
+          pSymbol "["
+          vref <- pVarRef
+          pSymbol "]"
+          e <- pExprPrim min_cl
+          return $! ExprAs loc vref e
+
+-- Primary expression:
+--  ExprGrp     -- (E)
+--  ExprLit     -- 'lit'
+--  ExprPatt    -- @patt@
+--  ExprDots    -- ...
 pExprPrim :: Int -> GP Expr
 pExprPrim min_cl = rule "pExprPrim" $ withLoc $ \loc -> pPrim loc
   where pPrim loc = do
             ensureIdent min_cl (>)
-            pExprGrp <|> pExprVar <|> pExprLit <|> pExprDots
+            pExprGrp <|> pPattern <|> pExprLit <|> pExprVar <|> pExprDots
           where pExprGrp = do
                   pSymbol "("
                   e <- pExpr min_cl
                   pSymbol ")"
                   return $ ExprGrp loc e
-                pExprVar  = do
+                pExprVar = do
                   vref <- pVarRef
                   P.notFollowedBy pVarDefEq
+                  pSpaces
                   return $! ExprVar loc vref
+                pPattern = do
+                  let pPattCharLit = P.noneOf "\\@" :: GP Char
+                      pPattCharEsc = P.char '\\' >> P.anyChar :: GP Char
+                      pPattCharIllegalNL = do
+                        P.eof <|> (P.char '\n' >> return ())
+                        fail $ "unclosed @ starting at " ++ show loc
+                  P.char '@'
+                  cs <- P.many1 (pPattCharIllegalNL <|> pPattCharLit <|> pPattCharEsc)
+                  pSymbol "@"
+                  return $! ExprPatt loc cs
+
                 pExprLit  = (ExprLit loc $!) <$> pLiteral
                 pExprDots = pSymbol "..." >> return (ExprDots loc)
 
--- 'foo' or '\''
+-- E.g. 'foo' or 'foo\''
 pLiteral :: GP String
 pLiteral = do
   let pEscChar c = P.char c >> return c

@@ -11,17 +11,17 @@ fmtGrammar g = desc ++ intercalate "\n" (map (fmtVar "") (gVars g))
                 comment = ("\n\n" ++ ) . unlines . map (++"-- ") . lines
 
 fmtVar :: String -> Var -> String
-fmtVar ind v = desc_str ++ ind ++ v_str ++ eq_str ++ expr_str ++ where_str
+fmtVar ind v = desc_str ++ ind ++ v_str ++ eq_str ++ " " ++ expr_str ++ where_str
   where desc_str
           | null desc = ""
           | otherwise = unlines (map ((ind ++ "-- ")++) (lines desc))
           where desc = vDesc v
-        v_str = "<" ++ vName v ++ ">"
+        v_str = vName v
         eq_str = " ="
         expr_str =
           case vExpr v of
             (ExprAlts _ [(e,c)])
-              -- foo ::= bar baz qux
+              -- foo = bar baz qux
               | length short_expr < cols_left -> short_expr
               where short_expr = fmtExpr e ++ comment c
             e@(ExprAlts _ as)
@@ -44,7 +44,7 @@ fmtVar ind v = desc_str ++ ind ++ v_str ++ eq_str ++ expr_str ++ where_str
             e -> fmtExpr e
 
         cols_left :: Int
-        cols_left = 80 - (length ind + length v_str + 1 + length eq_str + 1) -- "var ::= "
+        cols_left = 80 - (length ind + length v_str + 1 + length eq_str + 1) -- "var = "
 
         where_str
           --    [ind]foo =
@@ -66,7 +66,12 @@ fmtExpr (ExprSeq  _ es) = intercalate " " (map fmtExpr es)
 fmtExpr (ExprOpt  _ e)  = fmtExpr e ++ "?"
 fmtExpr (ExprMany _ e)  = fmtExpr e ++ "*"
 fmtExpr (ExprPos  _ e)  = fmtExpr e ++ "+"
+fmtExpr (ExprAs  _ t e) = "[" ++ t ++ "]" ++ fmtExpr e
 fmtExpr (ExprGrp  _ e)  = "(" ++ fmtExpr e ++ ")"
-fmtExpr (ExprVar  _ v)  = "<" ++ v ++ ">"
+fmtExpr (ExprVar  _ v)  = v
 fmtExpr (ExprLit  _ l)  = "'" ++ l ++ "'"
+fmtExpr (ExprPatt  _ l)  = "@" ++ escP l ++ "@"
+  where escP [] = []
+        escP ('@':cs) = "\\@" ++ escP cs
+        escP (c:cs) = c:escP cs
 fmtExpr (ExprDots _)    = "..."
